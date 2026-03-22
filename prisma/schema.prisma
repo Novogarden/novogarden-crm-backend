@@ -1,0 +1,165 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  password  String
+  name      String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Client {
+  id          String        @id @default(cuid())
+  nom         String
+  prenom      String?
+  email       String?
+  telephone   String?
+  adresse     String?
+  ville       String?
+  codePostal  String?
+  notes       String?
+  source      String?       // email, wix, manuel, etc.
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+  affaires    Affaire[]
+}
+
+model Affaire {
+  id          String        @id @default(cuid())
+  reference   String        @unique @default(cuid())
+  titre       String
+  description String?
+  clientId    String
+  client      Client        @relation(fields: [clientId], references: [id])
+  etape       Etape         @default(CONTACT)
+  montantDevis Float?
+  montantFacture Float?
+  dateContact  DateTime     @default(now())
+  dateDevis    DateTime?
+  dateRdv      DateTime?
+  dateDebut    DateTime?
+  dateFin      DateTime?
+  dateFacture  DateTime?
+  datePaiement DateTime?
+  priorite     Priorite     @default(NORMALE)
+  tags         String[]
+  emailIds     String[]     // IDs des emails Gmail liés
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+  historique   Historique[]
+  reclamations Reclamation[]
+}
+
+enum Etape {
+  CONTACT
+  DEVIS_EN_COURS
+  DEVIS_ENVOYE
+  DEVIS_ACCEPTE
+  DEVIS_REFUSE
+  RDV_PLANIFIE
+  TRAVAUX_EN_COURS
+  FACTURE_EMISE
+  PAYE
+  ARCHIVE
+}
+
+enum Priorite {
+  HAUTE
+  NORMALE
+  BASSE
+}
+
+model Historique {
+  id        String   @id @default(cuid())
+  affaireId String
+  affaire   Affaire  @relation(fields: [affaireId], references: [id])
+  action    String
+  details   String?
+  etapeFrom Etape?
+  etapeTo   Etape?
+  createdAt DateTime @default(now())
+}
+
+model Reclamation {
+  id          String   @id @default(cuid())
+  affaireId   String?
+  affaire     Affaire? @relation(fields: [affaireId], references: [id])
+  clientNom   String
+  clientEmail String?
+  objet       String
+  description String
+  statut      StatutReclamation @default(OUVERTE)
+  emailId     String?
+  resolueAt   DateTime?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+enum StatutReclamation {
+  OUVERTE
+  EN_COURS
+  RESOLUE
+  FERMEE
+}
+
+model EmailLog {
+  id          String   @id @default(cuid())
+  gmailId     String   @unique
+  sujet       String
+  expediteur  String
+  dateEmail   DateTime
+  type        TypeEmail?
+  affaireId   String?
+  traite      Boolean  @default(false)
+  snippet     String?
+  createdAt   DateTime @default(now())
+}
+
+enum TypeEmail {
+  DEVIS_DEMANDE
+  RDV_DEMANDE
+  RECLAMATION
+  PAIEMENT
+  AUTRE
+}
+
+model SocialStat {
+  id        String   @id @default(cuid())
+  reseau    String   // instagram, facebook, linkedin
+  date      DateTime @default(now())
+  vues      Int      @default(0)
+  likes     Int      @default(0)
+  partages  Int      @default(0)
+  abonnes   Int      @default(0)
+  reach     Int      @default(0)
+  raw       Json?
+}
+
+model WixStat {
+  id         String   @id @default(cuid())
+  date       DateTime @default(now())
+  visiteurs  Int      @default(0)
+  pageVues   Int      @default(0)
+  sessions   Int      @default(0)
+  tauxRebond Float?
+  sourcesTrafic Json?
+  raw        Json?
+}
+
+model OAuthToken {
+  id           String   @id @default(cuid())
+  service      String   @unique // gmail, instagram, facebook, linkedin
+  accessToken  String
+  refreshToken String?
+  expiresAt    DateTime?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+}
