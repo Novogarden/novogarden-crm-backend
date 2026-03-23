@@ -10,6 +10,7 @@ import wixRoutes from './routes/wix.js'
 import socialRoutes from './routes/social.js'
 import dashboardRoutes from './routes/dashboard.js'
 import documentsRoutes from './routes/documents.js'
+import chargesRoutes from './routes/charges.js'
 import { startSyncJobs } from './services/syncService.js'
 
 dotenv.config()
@@ -47,6 +48,7 @@ app.use('/api/wix', wixRoutes)
 app.use('/api/social', socialRoutes)
 app.use('/api/dashboard', dashboardRoutes)
 app.use('/api/documents', documentsRoutes)
+app.use('/api/charges', chargesRoutes)
 
 app.get('/api/health', (req, res) => res.json({ status: 'ok', timestamp: new Date() }))
 

@@ -154,6 +154,24 @@ model WixStat {
   raw        Json?
 }
 
+model Charge {
+  id           String   @id @default(cuid())
+  fileName     String
+  mimeType     String
+  fileData     String   // base64
+  fournisseur  String?
+  categorie    String   @default("DIVERS")
+  montantHT    Float?
+  montantTTC   Float?
+  tva          Float?
+  date         String?
+  reference    String?
+  notes        String?
+  rawText      String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+}
+
 model Document {
   id         String   @id @default(cuid())
   fileName   String
