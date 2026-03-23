@@ -2,7 +2,8 @@ import { Router } from 'express'
 import multer from 'multer'
 import { PrismaClient } from '@prisma/client'
 import { authMiddleware } from '../middleware/auth.js'
-import pdfParse from 'pdf-parse/lib/pdf-parse.js'
+import { pdf } from 'pdf-to-img'
+import { createWorker } from 'tesseract.js'
 
 const router = Router()
 const prisma = new PrismaClient()
@@ -26,10 +27,15 @@ function parseCharge(text) {
   const t = text || ''
   const result = { fournisseur: '', categorie: detectCategorie(t), montantHT: '', montantTTC: '', tva: '', date: '', reference: '', notes: '' }
 
-  // Fournisseur (nom en haut du document)
-  const lines = t.split('\n').map(l => l.trim()).filter(l => l.length > 2)
-  const nomLine = lines.find(l => /^[A-ZÀ-Ÿa-z]/.test(l) && l.length < 60 && !/^(facture|devis|bon de|date|total|montant)/i.test(l))
-  if (nomLine) result.fournisseur = nomLine.substring(0, 60)
+  // Fournisseur — cherche d'abord un mot-clé explicite, sinon première ligne significative
+  const fournMatch = t.match(/(?:vendu par|sold by|fournisseur|marchand|from|expéditeur)\s*[:\n]?\s*(.{3,60})/i)
+  if (fournMatch) {
+    result.fournisseur = fournMatch[1].trim().split('\n')[0].trim().substring(0, 60)
+  } else {
+    const lines = t.split('\n').map(l => l.trim()).filter(l => l.length > 2)
+    const nomLine = lines.find(l => /^[A-ZÀ-Ÿa-z]/.test(l) && l.length < 60 && !/^(facture|devis|bon de|date|total|montant|commande|order|bonjour|merci)/i.test(l))
+    if (nomLine) result.fournisseur = nomLine.substring(0, 60)
+  }
 
   // Référence
   const refMatch = t.match(/(?:facture|ref|n°|num[eé]ro)[^\n]*?([A-Z0-9\-\/]{4,20})/i)
@@ -53,21 +59,45 @@ function parseCharge(text) {
   const tvaMatch = t.match(/TVA\s*(?:20|10|5[.,]5)?\s*%[^\d]*(\d+(?:[.,]\d{2})?)/i)
   if (tvaMatch) result.tva = parseFloat(tvaMatch[1].replace(',', '.')).toFixed(2)
 
-  // Date
-  const dateMatch = t.match(/(\d{1,2}[\/\-\.]\d{1,2}[\/\-\.]\d{2,4})|(\d{1,2}\s+(?:janvier|février|mars|avril|mai|juin|juillet|août|septembre|octobre|novembre|décembre)\s+\d{4})/i)
+  // Date — supports DD/MM/YYYY, D MOIS YYYY, and MOIS D, YYYY (Tesseract OCR format)
+  const dateMatch = t.match(/(\d{1,2}[\/\-\.]\d{1,2}[\/\-\.]\d{2,4})|(\d{1,2}\s+(?:janvier|f[eé]vrier|mars|avril|mai|juin|juillet|ao[uû]t|septembre|octobre|novembre|d[eé]cembre)\s+\d{4})|((?:janvier|f[eé]vrier|mars|avril|mai|juin|juillet|ao[uû]t|septembre|octobre|novembre|d[eé]cembre)\s+\d{1,2},\s*\d{4})/i)
   if (dateMatch) result.date = dateMatch[0].trim()
 
   return result
+}
+
+async function extractText(file) {
+  let text = ''
+  try {
+    if (file.mimetype === 'application/pdf') {
+      // Render PDF to image then OCR
+      const pages = await pdf(file.buffer, { scale: 2 })
+      let imgBuf = null
+      for await (const page of pages) { imgBuf = page; break } // first page only
+      if (imgBuf) {
+        const worker = await createWorker('fra')
+        const { data: { text: t } } = await worker.recognize(imgBuf)
+        await worker.terminate()
+        text = t || ''
+      }
+    } else if (/^image\//.test(file.mimetype)) {
+      // Direct OCR on image
+      const worker = await createWorker('fra')
+      const { data: { text: t } } = await worker.recognize(file.buffer)
+      await worker.terminate()
+      text = t || ''
+    }
+  } catch (e) {
+    console.error('OCR error:', e.message)
+  }
+  return text
 }
 
 // POST /api/charges/parse
 router.post('/parse', authMiddleware, upload.single('file'), async (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ error: 'Aucun fichier' })
-    let text = ''
-    if (req.file.mimetype === 'application/pdf') {
-      try { const d = await pdfParse(req.file.buffer); text = d.text || '' } catch {}
-    }
+    const text = await extractText(req.file)
     res.json({ ...parseCharge(text), rawText: text.substring(0, 2000) })
   } catch (e) { res.status(500).json({ error: e.message }) }
 })

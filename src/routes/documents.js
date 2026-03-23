@@ -2,7 +2,8 @@ import { Router } from 'express'
 import multer from 'multer'
 import { PrismaClient } from '@prisma/client'
 import { authMiddleware } from '../middleware/auth.js'
-import pdfParse from 'pdf-parse/lib/pdf-parse.js'
+import { pdf } from 'pdf-to-img'
+import { createWorker } from 'tesseract.js'
 
 const router = Router()
 const prisma = new PrismaClient()
@@ -50,19 +51,36 @@ function parseDocument(text) {
   return result
 }
 
+async function extractText(file) {
+  let text = ''
+  try {
+    if (file.mimetype === 'application/pdf') {
+      const pages = await pdf(file.buffer, { scale: 2 })
+      let imgBuf = null
+      for await (const page of pages) { imgBuf = page; break }
+      if (imgBuf) {
+        const worker = await createWorker('fra')
+        const { data: { text: t } } = await worker.recognize(imgBuf)
+        await worker.terminate()
+        text = t || ''
+      }
+    } else if (/^image\//.test(file.mimetype)) {
+      const worker = await createWorker('fra')
+      const { data: { text: t } } = await worker.recognize(file.buffer)
+      await worker.terminate()
+      text = t || ''
+    }
+  } catch (e) {
+    console.error('OCR error:', e.message)
+  }
+  return text
+}
+
 // POST /api/documents/parse — analyse sans sauvegarder
 router.post('/parse', authMiddleware, upload.single('file'), async (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ error: 'Aucun fichier' })
-
-    let text = ''
-    if (req.file.mimetype === 'application/pdf') {
-      try {
-        const data = await pdfParse(req.file.buffer)
-        text = data.text || ''
-      } catch { text = '' }
-    }
-
+    const text = await extractText(req.file)
     const extracted = parseDocument(text)
     res.json({ ...extracted, rawText: text.substring(0, 2000) })
   } catch (e) {
