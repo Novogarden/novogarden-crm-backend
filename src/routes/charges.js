@@ -66,40 +66,76 @@ function parseCharge(text) {
   return result
 }
 
+// Extrait le premier flux JPEG embarqué dans un PDF binaire (Chromium PDFs)
+function extractJpegFromPdf(buffer) {
+  const SOI = [0xFF, 0xD8, 0xFF]
+  let start = -1
+  for (let i = 0; i < buffer.length - 2; i++) {
+    if (buffer[i] === 0xFF && buffer[i+1] === 0xD8 && buffer[i+2] === 0xFF) { start = i; break }
+  }
+  if (start === -1) return null
+  let end = -1
+  for (let i = buffer.length - 2; i >= start; i--) {
+    if (buffer[i] === 0xFF && buffer[i+1] === 0xD9) { end = i + 2; break }
+  }
+  if (end === -1) return null
+  return buffer.slice(start, end)
+}
+
+async function ocrBuffer(imgBuf) {
+  // Try French first, fall back to English
+  for (const lang of ['fra', 'eng']) {
+    let worker
+    try {
+      worker = await createWorker(lang)
+      const { data: { text } } = await worker.recognize(imgBuf)
+      await worker.terminate()
+      if (text && text.trim().length > 10) return text
+    } catch (e) {
+      console.error(`OCR ${lang} error:`, e.message)
+      try { if (worker) await worker.terminate() } catch {}
+    }
+  }
+  return ''
+}
+
 async function extractText(file) {
   let text = ''
   try {
     if (file.mimetype === 'application/pdf') {
-      // Render PDF to image then OCR
-      const pages = await pdf(file.buffer, { scale: 2 })
-      let imgBuf = null
-      for await (const page of pages) { imgBuf = page; break } // first page only
-      if (imgBuf) {
-        const worker = await createWorker('fra')
-        const { data: { text: t } } = await worker.recognize(imgBuf)
-        await worker.terminate()
-        text = t || ''
+      // Strategy 1: extract embedded JPEG directly from PDF binary (no native deps)
+      const jpeg = extractJpegFromPdf(file.buffer)
+      if (jpeg && jpeg.length > 5000) {
+        console.log('PDF: extracted embedded JPEG, size:', jpeg.length)
+        text = await ocrBuffer(jpeg)
+      }
+      // Strategy 2: pdf-to-img renderer (needs canvas)
+      if (!text) {
+        try {
+          const pages = await pdf(file.buffer, { scale: 2 })
+          let imgBuf = null
+          for await (const page of pages) { imgBuf = page; break }
+          if (imgBuf) {
+            console.log('PDF: rendered via pdf-to-img')
+            text = await ocrBuffer(imgBuf)
+          }
+        } catch (e) { console.error('pdf-to-img error:', e.message) }
       }
     } else if (/^image\//.test(file.mimetype)) {
-      // Direct OCR on image
-      const worker = await createWorker('fra')
-      const { data: { text: t } } = await worker.recognize(file.buffer)
-      await worker.terminate()
-      text = t || ''
+      text = await ocrBuffer(file.buffer)
     }
   } catch (e) {
-    console.error('OCR error:', e.message)
+    console.error('extractText error:', e.message)
   }
   return text
 }
 
-// POST /api/charges/parse
+// POST /api/charges/parse — toujours 200, jamais de 500
 router.post('/parse', authMiddleware, upload.single('file'), async (req, res) => {
-  try {
-    if (!req.file) return res.status(400).json({ error: 'Aucun fichier' })
-    const text = await extractText(req.file)
-    res.json({ ...parseCharge(text), rawText: text.substring(0, 2000) })
-  } catch (e) { res.status(500).json({ error: e.message }) }
+  if (!req.file) return res.status(400).json({ error: 'Aucun fichier' })
+  let text = ''
+  try { text = await extractText(req.file) } catch (e) { console.error('parse error:', e.message) }
+  res.json({ ...parseCharge(text), rawText: text.substring(0, 2000) })
 })
 
 // POST /api/charges

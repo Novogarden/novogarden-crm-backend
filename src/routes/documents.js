@@ -51,41 +51,67 @@ function parseDocument(text) {
   return result
 }
 
+function extractJpegFromPdf(buffer) {
+  let start = -1
+  for (let i = 0; i < buffer.length - 2; i++) {
+    if (buffer[i] === 0xFF && buffer[i+1] === 0xD8 && buffer[i+2] === 0xFF) { start = i; break }
+  }
+  if (start === -1) return null
+  let end = -1
+  for (let i = buffer.length - 2; i >= start; i--) {
+    if (buffer[i] === 0xFF && buffer[i+1] === 0xD9) { end = i + 2; break }
+  }
+  if (end === -1) return null
+  return buffer.slice(start, end)
+}
+
+async function ocrBuffer(imgBuf) {
+  for (const lang of ['fra', 'eng']) {
+    let worker
+    try {
+      worker = await createWorker(lang)
+      const { data: { text } } = await worker.recognize(imgBuf)
+      await worker.terminate()
+      if (text && text.trim().length > 10) return text
+    } catch (e) {
+      console.error(`OCR ${lang} error:`, e.message)
+      try { if (worker) await worker.terminate() } catch {}
+    }
+  }
+  return ''
+}
+
 async function extractText(file) {
   let text = ''
   try {
     if (file.mimetype === 'application/pdf') {
-      const pages = await pdf(file.buffer, { scale: 2 })
-      let imgBuf = null
-      for await (const page of pages) { imgBuf = page; break }
-      if (imgBuf) {
-        const worker = await createWorker('fra')
-        const { data: { text: t } } = await worker.recognize(imgBuf)
-        await worker.terminate()
-        text = t || ''
+      const jpeg = extractJpegFromPdf(file.buffer)
+      if (jpeg && jpeg.length > 5000) {
+        text = await ocrBuffer(jpeg)
+      }
+      if (!text) {
+        try {
+          const pages = await pdf(file.buffer, { scale: 2 })
+          let imgBuf = null
+          for await (const page of pages) { imgBuf = page; break }
+          if (imgBuf) text = await ocrBuffer(imgBuf)
+        } catch (e) { console.error('pdf-to-img error:', e.message) }
       }
     } else if (/^image\//.test(file.mimetype)) {
-      const worker = await createWorker('fra')
-      const { data: { text: t } } = await worker.recognize(file.buffer)
-      await worker.terminate()
-      text = t || ''
+      text = await ocrBuffer(file.buffer)
     }
   } catch (e) {
-    console.error('OCR error:', e.message)
+    console.error('extractText error:', e.message)
   }
   return text
 }
 
-// POST /api/documents/parse — analyse sans sauvegarder
+// POST /api/documents/parse — toujours 200, jamais de 500
 router.post('/parse', authMiddleware, upload.single('file'), async (req, res) => {
-  try {
-    if (!req.file) return res.status(400).json({ error: 'Aucun fichier' })
-    const text = await extractText(req.file)
-    const extracted = parseDocument(text)
-    res.json({ ...extracted, rawText: text.substring(0, 2000) })
-  } catch (e) {
-    res.status(500).json({ error: e.message })
-  }
+  if (!req.file) return res.status(400).json({ error: 'Aucun fichier' })
+  let text = ''
+  try { text = await extractText(req.file) } catch (e) { console.error('parse error:', e.message) }
+  res.json({ ...parseDocument(text), rawText: text.substring(0, 2000) })
 })
 
 // POST /api/documents — sauvegarde
