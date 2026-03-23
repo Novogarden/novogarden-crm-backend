@@ -154,6 +154,25 @@ model WixStat {
   raw        Json?
 }
 
+model Document {
+  id         String   @id @default(cuid())
+  fileName   String
+  mimeType   String
+  fileData   String   // base64
+  type       String   @default("AUTRE") // FACTURE, CONTRAT, DEVIS, AUTRE
+  clientNom  String?
+  adresse    String?
+  reference  String?
+  pack       String?  // SOLO, ESSENTIEL, SERENITE
+  surface    String?
+  montant    String?
+  date       String?
+  notes      String?
+  rawText    String?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+}
+
 model OAuthToken {
   id           String   @id @default(cuid())
   service      String   @unique // gmail, instagram, facebook, linkedin
