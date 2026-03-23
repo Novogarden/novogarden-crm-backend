@@ -16,8 +16,22 @@ dotenv.config()
 const app = express()
 const PORT = process.env.PORT || 3001
 
+const allowedOrigins = [
+  process.env.FRONTEND_URL,
+  'http://localhost:5173',
+  'http://localhost:3000',
+].filter(Boolean)
+
 app.use(cors({
-  origin: process.env.FRONTEND_URL || 'http://localhost:5173',
+  origin: (origin, cb) => {
+    // Allow requests with no origin (mobile, curl, etc.)
+    if (!origin) return cb(null, true)
+    // Allow any vercel.app subdomain + configured origins
+    if (allowedOrigins.includes(origin) || /\.vercel\.app$/.test(origin)) {
+      return cb(null, true)
+    }
+    cb(new Error('CORS non autorisé: ' + origin))
+  },
   credentials: true
 }))
 app.use(express.json())
